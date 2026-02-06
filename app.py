@@ -18,7 +18,7 @@ BASE_DIR = Path(__file__).parent
 DATA_DIR = BASE_DIR / "data"
 HIST_DIR = DATA_DIR / "historical"
 RECENT_FILE = DATA_DIR / "recent" / "fact_recent.parquet"
-BUDGET_FILE = DATA_DIR / "data" / "budget.csv"
+BUDGET_FILE = DATA_DIR / "budget.csv"
 META_FILE = DATA_DIR / "metadata.json"
 
 TODAY = pd.Timestamp.today().normalize()
