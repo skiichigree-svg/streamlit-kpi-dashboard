@@ -1,0 +1,11 @@
+# Dashboard / UI
+streamlit
+plotly
+
+# Data handling
+pandas
+pyarrow
+python-dateutil
+
+# Utility
+requests
