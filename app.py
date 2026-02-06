@@ -17,7 +17,7 @@ BASE_DIR = Path(__file__).parent
 DATA_DIR = BASE_DIR / "data"
 HIST_DIR = DATA_DIR / "historical"
 RECENT_FILE = DATA_DIR / "recent" / "fact_recent.parquet"
-BUDGET_FILE = DATA_DIR / "budget.xlsx"
+BUDGET_FILE = DATA_DIR / "data" / "budget.csv"
 META_FILE = DATA_DIR / "metadata.json"
 
 TODAY = pd.Timestamp.today().normalize()
@@ -45,9 +45,10 @@ def load_actual_data():
 
 @st.cache_data
 def load_budget():
-    if not BUDGET_FILE.exists():
+    if not os.path.exists(BUDGET_FILE):
+        st.warning("Budget file not found. Budget-related KPIs are disabled.")
         return pd.DataFrame()
-    return pd.read_excel(BUDGET_FILE)
+    return pd.read_csv(BUDGET_FILE)
 
 
 @st.cache_data
