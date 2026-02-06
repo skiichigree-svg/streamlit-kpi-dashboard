@@ -2,6 +2,7 @@
 # app.py  (Overall KPI Integrated)
 # =====================================
 
+import os
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
