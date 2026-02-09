@@ -7,12 +7,50 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 from pathlib import Path
+from datetime import datetime
 
 # -----------------------------
 # Basic Config
 # -----------------------------
 st.set_page_config(layout="wide")
-st.title("📊 Performance Dashboard")
+
+# =============================
+# Dashboard Title + Meta Info
+# =============================
+refresh_time = (
+    meta.get("last_updated", "—") if meta is not None else "—"
+)
+
+latest_data_date = (
+    meta.get("latest_jst_date", "—") if meta is not None else "—"
+)
+
+
+st.markdown(
+    f"""
+    <div style="
+        display: flex;
+        align-items: baseline;
+        gap: 12px;
+        margin-bottom: 8px;
+    ">
+        <div style="font-size: 2.2rem; font-weight: 700;">
+            📊 Performance Dashboard
+        </div>
+        <div style="
+            font-size: 9px;
+            color: #7f8c8d;
+            line-height: 1.2;
+        ">
+            データリフレッシュ実行日時：{refresh_time}<br>
+            最新データ日付：{latest_data_date}
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+
 
 BASE_DIR = Path(__file__).parent
 DATA_DIR = BASE_DIR / "data"
@@ -22,6 +60,46 @@ BUDGET_FILE = DATA_DIR / "budget.csv"
 META_FILE = DATA_DIR / "metadata.json"
 
 TODAY = pd.Timestamp.today().normalize()
+
+
+st.markdown(
+    """
+    <style>
+    /* Pacing Card Typography */
+    .pacing-title {
+        font-size: 2.25rem;
+        font-weight: 700;
+        margin-bottom: 0.25rem;
+    }
+
+    .pacing-spend {
+        font-size: 1.75rem;
+        font-weight: 600;
+        line-height: 1.2;
+    }
+
+    .pacing-yoy {
+        font-size: 1.5rem;
+        font-weight: 600;
+    }
+
+    <style>
+    /* YoY color rules */
+    .yoy-up {
+        color: #1a9850;   /* green */
+    }
+    .yoy-down {
+        color: #d73027;   /* red */
+    }
+    .yoy-flat {
+        color: #7f8c8d;   /* gray */
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+
 
 # -----------------------------
 # Data Load
@@ -47,9 +125,16 @@ def load_actual_data():
 @st.cache_data
 def load_budget():
     if not os.path.exists(BUDGET_FILE):
-        st.warning("Budget file not found. Budget-related KPIs are disabled.")
+        st.warning("Budget file not found.")
         return pd.DataFrame()
-    return pd.read_csv(BUDGET_FILE)
+
+    df = pd.read_csv(BUDGET_FILE)
+
+    # 念のためカラム名の空白だけ除去
+    df.columns = df.columns.str.strip()
+
+    return df
+
 
 
 @st.cache_data
@@ -326,47 +411,100 @@ def monthly_chart(df, show_usd=True):
 
     return fig
 
-def render_pacing_block(label, df_all, df_budget):
+def format_yoy(yoy):
     """
-    Pacing card 用ブロック
-    - % of target bar
-    - 100% line
-    - color rule (under / over pace)
-    - YoY stats（数値のみ）
+    YoY値を表示用に変換
+    return: (value_str, css_class, icon)
     """
+    if yoy is None:
+        return "—", "yoy-flat", ""
+    if yoy > 0:
+        return f"{yoy*100:.1f}%", "yoy-up", "▲"
+    if yoy < 0:
+        return f"{abs(yoy)*100:.1f}%", "yoy-down", "▼"
+    return "0.0%", "yoy-flat", ""
 
+
+def render_pacing_block(label, df_all, df_budget):
     start = period_start(TODAY, label)
     kpi = build_overall_kpi(df_all, df_budget, start, TODAY)
 
-    # ------------------
-    # Header
-    # ------------------
-    st.markdown(f"### {label}")
+    # =========================
+    # ① タイトル（2.25rem）
+    # =========================
+    st.markdown(
+        f"<div class='pacing-title'>{label}</div>",
+        unsafe_allow_html=True
+    )
 
-    # ------------------
-    # % of Target (Pacing bar)
-    # ------------------
+    # =========================
+    # ② Spend / Budget（1.75rem）
+    # =========================
+    spend_jpy = kpi["current"]["local"]
+    spend_usd = kpi["current"]["usd"]
+    budget_usd = kpi["budget"]
+
+    st.markdown(
+        f"""
+        <div class="pacing-spend">
+            ¥{spend_jpy:,.0f}
+            <span style="color:#7f8c8d;"> / Budget —</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        f"""
+        <div class="pacing-spend">
+            ${spend_usd:,.0f}
+            <span style="color:#7f8c8d;"> / Budget ${budget_usd:,.0f}</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # =========================
+    # ③ Pacing Bar
+    # =========================
     st.plotly_chart(
         progress_bar(kpi["achievement"]),
         use_container_width=True,
         key=f"{label}_pacing_bar"
     )
 
-    # ------------------
-    # YoY stats (numbers only)
-    # ------------------
-    yoy_jpy = (
-        f"{kpi['yoy_local']*100:.1f}%"
-        if kpi["yoy_local"] is not None else "—"
-    )
-    yoy_usd = (
-        f"{kpi['yoy_usd']*100:.1f}%"
-        if kpi["yoy_usd"] is not None else "—"
-    )
+    # =========================
+    # ④ YoY（1.5rem + ↑↓ 色分け）
+    # =========================
+    yoy_jpy_val, yoy_jpy_class, yoy_jpy_icon = format_yoy(kpi["yoy_local"])
+    yoy_usd_val, yoy_usd_class, yoy_usd_icon = format_yoy(kpi["yoy_usd"])
 
     c1, c2 = st.columns(2)
-    c1.metric("YoY JPY", yoy_jpy)
-    c2.metric("YoY USD", yoy_usd)
+
+    with c1:
+        st.markdown(
+            f"""
+            <div class="pacing-yoy {yoy_jpy_class}">
+                YoY JPY<br>
+                {yoy_jpy_icon} {yoy_jpy_val}
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+    with c2:
+        st.markdown(
+            f"""
+            <div class="pacing-yoy {yoy_usd_class}">
+                YoY USD<br>
+                {yoy_usd_icon} {yoy_usd_val}
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+
+    
 
 
 # =============================
@@ -374,12 +512,7 @@ def render_pacing_block(label, df_all, df_budget):
 # =============================
 st.header("🚦 Pacing")
 
-with st.container(border=True):
-
-    st.markdown(
-        "<div style='background:#FFF9E6; padding:16px; border-radius:10px'>",
-        unsafe_allow_html=True,
-    )
+with st.container():
 
     cols = st.columns(3)
 
@@ -387,15 +520,19 @@ with st.container(border=True):
         with col:
             render_pacing_block(label, df_all, df_budget)
 
-    st.markdown("</div>", unsafe_allow_html=True)
-
-
-
-
+# =============================
+# Divider
+# =============================
+st.divider()
 
 # -----------------------------
 # Monthly Trend
 # -----------------------------
+show_usd_global = st.toggle(
+    "Show USD (toggle to JPY)",
+    value=True
+)
+
 st.subheader("📈 Overall Monthly Trend (Last 13 Months)")
 
 df_m = monthly_actual_budget(df_all, df_budget)
