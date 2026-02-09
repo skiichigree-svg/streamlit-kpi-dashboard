@@ -37,3 +37,11 @@ scripts/refresh_data.py
 
 # Data cache (intentionally tracked)
 # data/**/*.parquet
+
+
+# Local launch / manual scripts
+*.bat
+
+# Local-only scripts
+scripts/local/
+
