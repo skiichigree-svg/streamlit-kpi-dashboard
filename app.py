@@ -326,124 +326,69 @@ def monthly_chart(df, show_usd=True):
 
     return fig
 
+def render_pacing_block(label, df_all, df_budget):
+    """
+    Pacing card 用ブロック
+    - % of target bar
+    - 100% line
+    - color rule (under / over pace)
+    - YoY stats（数値のみ）
+    """
+
+    start = period_start(TODAY, label)
+    kpi = build_overall_kpi(df_all, df_budget, start, TODAY)
+
+    # ------------------
+    # Header
+    # ------------------
+    st.markdown(f"### {label}")
+
+    # ------------------
+    # % of Target (Pacing bar)
+    # ------------------
+    st.plotly_chart(
+        progress_bar(kpi["achievement"]),
+        use_container_width=True,
+        key=f"{label}_pacing_bar"
+    )
+
+    # ------------------
+    # YoY stats (numbers only)
+    # ------------------
+    yoy_jpy = (
+        f"{kpi['yoy_local']*100:.1f}%"
+        if kpi["yoy_local"] is not None else "—"
+    )
+    yoy_usd = (
+        f"{kpi['yoy_usd']*100:.1f}%"
+        if kpi["yoy_usd"] is not None else "—"
+    )
+
+    c1, c2 = st.columns(2)
+    c1.metric("YoY JPY", yoy_jpy)
+    c2.metric("YoY USD", yoy_usd)
 
 
-# -----------------------------
-# UI : Overall KPI
-# -----------------------------
-st.header("📌 Overall KPI")
+# =============================
+# Pacing Card
+# =============================
+st.header("🚦 Pacing")
 
-left, right = st.columns([3, 2])
+with st.container(border=True):
 
-with left:
-    show_usd_global = st.toggle("Show USD in YoY charts", value=False)
+    st.markdown(
+        "<div style='background:#FFF9E6; padding:16px; border-radius:10px'>",
+        unsafe_allow_html=True,
+    )
 
-with right:
-    if meta is not None:
-        latest_date = df_all["jst_date"].max().strftime("%Y-%m-%d")
-        updated_at = meta.get("last_updated", "—")
+    cols = st.columns(3)
 
-        st.caption(
-            f"📅 Latest data: **{latest_date}**  ｜ 🔄 Updated at: **{updated_at}**"
-        )
+    for col, label in zip(cols, ["MTD", "QTD", "YTD"]):
+        with col:
+            render_pacing_block(label, df_all, df_budget)
 
+    st.markdown("</div>", unsafe_allow_html=True)
 
-for label in ["MTD", "QTD", "YTD"]:
-    with st.expander(label, expanded=(label == "MTD")):
-        start = period_start(TODAY, label)
-        kpi = build_overall_kpi(df_all, df_budget, start, TODAY)
-
-
-    st.subheader(label)
-
-    # =========================
-    # 2カラム：Budget / YoY
-    # =========================
-    c_budget, c_yoy = st.columns([1, 2])
-
-    # =====================
-    # Budget Achievement
-    # =====================
-    with c_budget:
-        with st.container(border=True):
-
-            # KPI
-            st.metric(
-                "Budget Achievement",
-                f"{kpi['achievement']*100:.1f}%" if kpi["achievement"] else "—",
-                f"Actual ${kpi['current']['usd']:,.0f} / Budget ${kpi['budget']:,.0f}"
-            )
-
-            # グラフ背景
-            with st.container():
-                st.markdown(
-                    "<div style='background:#FFF9E6; padding:8px; border-radius:6px'>",
-                    unsafe_allow_html=True,
-                )
-
-                st.plotly_chart(
-                    progress_bar(kpi["achievement"]),
-                    use_container_width=True,
-                    key=f"{label}_budget"
-                )
-
-                st.markdown("</div>", unsafe_allow_html=True)
-
-    # =====================
-    # YoY
-    # =====================
-    with c_yoy:
-        with st.container(border=True):
-
-            # KPI
-            m1, m2 = st.columns(2)
-            m1.metric(
-                "PartnerCost (JPY)",
-                f"¥{kpi['current']['local']:,.0f}",
-                f"{kpi['yoy_local']*100:.1f}% YoY" if kpi["yoy_local"] else "—"
-            )
-            m2.metric(
-                "PartnerCost (USD)",
-                f"${kpi['current']['usd']:,.0f}",
-                f"{kpi['yoy_usd']*100:.1f}% YoY" if kpi["yoy_usd"] else "—"
-            )
-
-            # グラフ背景
-            with st.container():
-                st.markdown(
-                    "<div style='background:#FFF9E6; padding:8px; border-radius:6px'>",
-                    unsafe_allow_html=True,
-                )
-
-                st.plotly_chart(
-                    yoy_bar(
-                        kpi["previous"]["local"],
-                        kpi["current"]["local"],
-                        "JPY",
-                        currency="JPY",
-                        bar_width=0.35,   # ★ ここで幅統一
-                    ),
-                    use_container_width=True,
-                    key=f"{label}_yoy_jpy"
-                )
-
-                if show_usd_global:
-                    st.plotly_chart(
-                        yoy_bar(
-                            kpi["previous"]["usd"],
-                            kpi["current"]["usd"],
-                            "USD",
-                            currency="USD",
-                            bar_width=0.35,
-                        ),
-                        use_container_width=True,
-                        key=f"{label}_yoy_usd"
-                    )
-
-                st.markdown("</div>", unsafe_allow_html=True)
-
-
-    st.divider()
 
 
 
