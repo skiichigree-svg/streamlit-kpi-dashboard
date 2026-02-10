@@ -7,7 +7,7 @@ import json
 import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
-from datetime import date
+from datetime import datetime
 from pathlib import Path
 
 # -------------------------------------
@@ -17,38 +17,17 @@ st.set_page_config(layout="wide")
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
-META_PATH = DATA_DIR / "metadata.json"
+
 RECENT_PATH = DATA_DIR / "recent" / "fact_recent.parquet"
 BUDGET_PATH = DATA_DIR / "budget.csv"
+META_PATH = DATA_DIR / "metadata.json"
 
 # -------------------------------------
-# Utils (Date)
-# -------------------------------------
-def get_today_jst():
-    return pd.Timestamp.now(tz="Asia/Tokyo").normalize()
-
-def get_qtd_start(d: pd.Timestamp):
-    q_month = ((d.month - 1) // 3) * 3 + 1
-    return d.replace(month=q_month, day=1)
-
-# -------------------------------------
-# Load Data
+# Loaders
 # -------------------------------------
 @st.cache_data
 def load_recent():
-    df = pd.read_parquet(RECENT_PATH)
-
-    required_cols = {
-        "year",
-        "month",
-        "PartnerCostInUSD",
-        "PartnerCostInAdvertiserCurrency",
-    }
-    missing = required_cols - set(df.columns)
-    if missing:
-        raise ValueError(f"fact_recent.parquet missing columns: {missing}")
-
-    return df
+    return pd.read_parquet(RECENT_PATH)
 
 @st.cache_data
 def load_budget():
@@ -63,182 +42,141 @@ def load_metadata():
             return json.load(f)
     return {}
 
-meta = load_metadata()
+# -------------------------------------
+# Aggregation
+# -------------------------------------
+def monthly_actual_budget(df, df_budget):
+    act = df.groupby(["year", "month"], as_index=False).agg(
+        PartnerCostInUSD=("PartnerCostInUSD", "sum"),
+        PartnerCostInAdvertiserCurrency=("PartnerCostInAdvertiserCurrency", "sum"),
+    )
 
-if "latest_jst_date" in meta:
-    st.caption(f"最新データ日付: {meta['latest_jst_date']}")
+    bud = df_budget.groupby(["year", "month"], as_index=False).agg(
+        PartnerCostInUSD=("PartnerCostInUSD", "sum"),
+        PartnerCostInAdvertiserCurrency=("PartnerCostInAdvertiserCurrency", "sum"),
+    ) if not df_budget.empty else pd.DataFrame()
 
+    m = act.merge(
+        bud,
+        on=["year", "month"],
+        how="left",
+        suffixes=("_actual", "_budget"),
+    )
+
+    m["ym"] = pd.to_datetime(
+        m["year"].astype(str) + "-" + m["month"].astype(str) + "-01"
+    )
+
+    return m.sort_values("ym").tail(13)
+
+# -------------------------------------
+# Main
+# -------------------------------------
 df_all = load_recent()
 df_budget = load_budget()
-
-# -------------------------------------
-# Header
-# -------------------------------------
-st.title("📊 Performance Dashboard")
 meta = load_metadata()
 
+st.title("📊 Performance Dashboard")
+
+# 最新データ日付（metadata 由来）
 if "latest_jst_date" in meta:
     st.caption(f"最新データ日付: {meta['latest_jst_date']}")
-else:
-    st.caption("最新データ日付: N/A")
-
 
 # -------------------------------------
-# MTD / QTD / YTD (fact_recent 直)
+# MTD / QTD / YTD
 # -------------------------------------
-def calc_mtd_qtd_ytd(df_all: pd.DataFrame):
-    # 最新 month を「現在月」とみなす
-    max_ym = (df_all["year"] * 100 + df_all["month"]).max()
-    cur_year = max_ym // 100
-    cur_month = max_ym % 100
+today = pd.to_datetime(meta["latest_jst_date"])
+current_year = today.year
+current_month = today.month
 
-    mtd = df_all[
-        (df_all["year"] == cur_year) &
-        (df_all["month"] == cur_month)
-    ]
+mtd = df_all.query("year == @current_year and month == @current_month")
+ytd = df_all.query("year == @current_year")
 
-    q_start_month = ((cur_month - 1) // 3) * 3 + 1
-    qtd = df_all[
-        (df_all["year"] == cur_year) &
-        (df_all["month"] >= q_start_month) &
-        (df_all["month"] <= cur_month)
-    ]
+qtd_months = [(current_month - 1) // 3 * 3 + i for i in range(1, 4)]
+qtd = df_all.query(
+    "year == @current_year and month in @qtd_months"
+)
 
-    ytd = df_all[df_all["year"] == cur_year]
-
-    return {
-        "MTD": {
-            "USD": mtd["PartnerCostInUSD"].sum(),
-            "JPY": mtd["PartnerCostInAdvertiserCurrency"].sum(),
-        },
-        "QTD": {
-            "USD": qtd["PartnerCostInUSD"].sum(),
-            "JPY": qtd["PartnerCostInAdvertiserCurrency"].sum(),
-        },
-        "YTD": {
-            "USD": ytd["PartnerCostInUSD"].sum(),
-            "JPY": ytd["PartnerCostInAdvertiserCurrency"].sum(),
-        },
-    }
-
-
-progress = calc_mtd_qtd_ytd(df_all)
-
-# -------------------------------------
-# Pacing Display
-# -------------------------------------
-st.header("🚦 Pacing")
-
-cols = st.columns(3)
-for col, key in zip(cols, ["MTD", "QTD", "YTD"]):
-    with col:
-        st.subheader(key)
-        st.metric(
-            label="USD",
-            value=f"${progress[key]['USD']:,.0f}"
-        )
-        st.metric(
-            label="JPY",
-            value=f"¥{progress[key]['JPY']:,.0f}"
-        )
-
-# -------------------------------------
-# Monthly Trend (途中月含む)
-# -------------------------------------
-def build_monthly_trend(df_all: pd.DataFrame, df_budget: pd.DataFrame):
-    max_ym = (df_all["year"] * 100 + df_all["month"]).max()
-    cur_year = max_ym // 100
-    cur_month = max_ym % 100
-
-    monthly = (
-        df_all
-        .groupby(["year", "month"], as_index=False)
-        .agg(
-            actual_usd=("PartnerCostInUSD", "sum"),
-            actual_jpy=("PartnerCostInAdvertiserCurrency", "sum"),
-        )
+def sum_block(df):
+    return (
+        df["PartnerCostInUSD"].sum(),
+        df["PartnerCostInAdvertiserCurrency"].sum(),
     )
 
-    monthly["is_partial_month"] = (
-        (monthly["year"] == cur_year) &
-        (monthly["month"] == cur_month)
-    )
+mtd_usd, mtd_jpy = sum_block(mtd)
+qtd_usd, qtd_jpy = sum_block(qtd)
+ytd_usd, ytd_jpy = sum_block(ytd)
 
-    monthly["ym"] = pd.to_datetime(
-        monthly["year"].astype(str)
-        + "-"
-        + monthly["month"].astype(str).str.zfill(2)
-        + "-01"
-    )
+c1, c2, c3 = st.columns(3)
+c1.metric("MTD (USD)", f"${mtd_usd:,.0f}")
+c1.metric("MTD (JPY)", f"¥{mtd_jpy:,.0f}")
 
-    if not df_budget.empty:
-        monthly = monthly.merge(
-            df_budget.rename(
-                columns={
-                    "PartnerCostInUSD": "budget_usd",
-                    "PartnerCostInAdvertiserCurrency": "budget_jpy",
-                }
-            ),
-            on=["year", "month"],
-            how="left",
-        )
+c2.metric("QTD (USD)", f"${qtd_usd:,.0f}")
+c2.metric("QTD (JPY)", f"¥{qtd_jpy:,.0f}")
 
-    return monthly.sort_values("ym").tail(13)
+c3.metric("YTD (USD)", f"${ytd_usd:,.0f}")
+c3.metric("YTD (JPY)", f"¥{ytd_jpy:,.0f}")
 
-
-monthly = build_monthly_trend(df_all, df_budget)
+st.divider()
 
 # -------------------------------------
-# Plotly Chart
+# Monthly Trend (Last 13 Months)
 # -------------------------------------
-def plot_monthly_trend(monthly: pd.DataFrame, currency="USD"):
-    actual_col = "actual_usd" if currency == "USD" else "actual_jpy"
-    budget_col = "budget_usd" if currency == "USD" else "budget_jpy"
+st.subheader("📈 Overall Monthly Trend (Last 13 Months)")
 
-    fig = go.Figure()
-
-    done = monthly[~monthly["is_partial_month"]]
-    fig.add_bar(
-        x=done["ym"],
-        y=done[actual_col],
-        name="Actual (Closed Month)",
-        marker_color="#16a34a",
-    )
-
-    partial = monthly[monthly["is_partial_month"]]
-    fig.add_bar(
-        x=partial["ym"],
-        y=partial[actual_col],
-        name="Actual (MTD)",
-        marker_color="#16a34a",
-        marker_pattern_shape="/",
-        opacity=0.6,
-    )
-
-    if budget_col in monthly.columns:
-        fig.add_trace(
-            go.Scatter(
-                x=monthly["ym"],
-                y=monthly[budget_col],
-                name="Budget",
-                mode="lines+markers",
-                line=dict(dash="dash", color="gray"),
-            )
-        )
-
-    fig.update_layout(
-        title="Overall Monthly Actual vs Budget",
-        barmode="overlay",
-        xaxis_title="Month",
-        yaxis_title=currency,
-        legend_orientation="h",
-    )
-
-    return fig
-
-st.header("📈 Overall Monthly Trend (Last 13 Months)")
 currency = st.radio("Currency", ["USD", "JPY"], horizontal=True)
-fig = plot_monthly_trend(monthly, currency=currency)
+
+m = monthly_actual_budget(df_all, df_budget)
+
+value_col = (
+    "PartnerCostInUSD_actual"
+    if currency == "USD"
+    else "PartnerCostInAdvertiserCurrency_actual"
+)
+budget_col = (
+    "PartnerCostInUSD_budget"
+    if currency == "USD"
+    else "PartnerCostInAdvertiserCurrency_budget"
+)
+
+latest_ym = m["ym"].max()
+
+colors = []
+patterns = []
+
+for ym in m["ym"]:
+    if ym == latest_ym:
+        colors.append("#2ECC71")
+        patterns.append("/")
+    else:
+        colors.append("#2ECC71")
+        patterns.append("")
+
+fig = go.Figure()
+
+fig.add_bar(
+    x=m["ym"],
+    y=m[value_col],
+    name="Actual",
+    marker=dict(color=colors, pattern_shape=patterns),
+)
+
+if budget_col in m.columns:
+    fig.add_scatter(
+        x=m["ym"],
+        y=m[budget_col],
+        name="Budget",
+        mode="lines+markers",
+        line=dict(dash="dash"),
+    )
+
+fig.update_layout(
+    height=450,
+    xaxis_title="Month",
+    yaxis_title=currency,
+    legend_orientation="h",
+)
+
 st.plotly_chart(fig, use_container_width=True)
 
-st.caption("※ Striped bar indicates partial (in-progress) month.")
+st.caption("※ ストライプ表示は進行中の月を示します")
