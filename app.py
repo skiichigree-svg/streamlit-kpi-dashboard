@@ -16,7 +16,7 @@ st.set_page_config(layout="wide")
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
-META_PATH = os.path.join(DATA_DIR, "metadata.json")
+META_PATH = DATA_DIR / "metadata.json"
 RECENT_PATH = DATA_DIR / "recent" / "fact_recent.parquet"
 BUDGET_PATH = DATA_DIR / "budget.csv"
 
