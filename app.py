@@ -36,7 +36,17 @@ def get_qtd_start(d: pd.Timestamp):
 @st.cache_data
 def load_recent():
     df = pd.read_parquet(RECENT_PATH)
-    df["jst_date"] = pd.to_datetime(df["jst_date"])
+
+    required_cols = {
+        "year",
+        "month",
+        "PartnerCostInUSD",
+        "PartnerCostInAdvertiserCurrency",
+    }
+    missing = required_cols - set(df.columns)
+    if missing:
+        raise ValueError(f"fact_recent.parquet missing columns: {missing}")
+
     return df
 
 @st.cache_data
@@ -44,6 +54,18 @@ def load_budget():
     if BUDGET_PATH.exists():
         return pd.read_csv(BUDGET_PATH)
     return pd.DataFrame()
+
+@st.cache_data
+def load_metadata():
+    if META_PATH.exists():
+        with open(META_PATH, encoding="utf-8") as f:
+            return json.load(f)
+    return {}
+
+meta = load_metadata()
+
+if "latest_jst_date" in meta:
+    st.caption(f"最新データ日付: {meta['latest_jst_date']}")
 
 df_all = load_recent()
 df_budget = load_budget()
@@ -60,11 +82,24 @@ st.caption(f"最新データ日付: {latest_date.date()}")
 # MTD / QTD / YTD (fact_recent 直)
 # -------------------------------------
 def calc_mtd_qtd_ytd(df_all: pd.DataFrame):
-    today = get_today_jst()
+    # 最新 month を「現在月」とみなす
+    max_ym = (df_all["year"] * 100 + df_all["month"]).max()
+    cur_year = max_ym // 100
+    cur_month = max_ym % 100
 
-    mtd = df_all[df_all["jst_date"] >= today.replace(day=1)]
-    qtd = df_all[df_all["jst_date"] >= get_qtd_start(today)]
-    ytd = df_all[df_all["jst_date"] >= today.replace(month=1, day=1)]
+    mtd = df_all[
+        (df_all["year"] == cur_year) &
+        (df_all["month"] == cur_month)
+    ]
+
+    q_start_month = ((cur_month - 1) // 3) * 3 + 1
+    qtd = df_all[
+        (df_all["year"] == cur_year) &
+        (df_all["month"] >= q_start_month) &
+        (df_all["month"] <= cur_month)
+    ]
+
+    ytd = df_all[df_all["year"] == cur_year]
 
     return {
         "MTD": {
@@ -80,6 +115,7 @@ def calc_mtd_qtd_ytd(df_all: pd.DataFrame):
             "JPY": ytd["PartnerCostInAdvertiserCurrency"].sum(),
         },
     }
+
 
 progress = calc_mtd_qtd_ytd(df_all)
 
@@ -105,25 +141,22 @@ for col, key in zip(cols, ["MTD", "QTD", "YTD"]):
 # Monthly Trend (途中月含む)
 # -------------------------------------
 def build_monthly_trend(df_all: pd.DataFrame, df_budget: pd.DataFrame):
-    today = get_today_jst()
+    max_ym = (df_all["year"] * 100 + df_all["month"]).max()
+    cur_year = max_ym // 100
+    cur_month = max_ym % 100
 
     monthly = (
         df_all
-        .assign(
-            year=lambda x: x["jst_date"].dt.year,
-            month=lambda x: x["jst_date"].dt.month,
-        )
         .groupby(["year", "month"], as_index=False)
         .agg(
             actual_usd=("PartnerCostInUSD", "sum"),
             actual_jpy=("PartnerCostInAdvertiserCurrency", "sum"),
-            last_date=("jst_date", "max"),
         )
     )
 
     monthly["is_partial_month"] = (
-        monthly["last_date"].dt.to_period("M")
-        == today.to_period("M")
+        (monthly["year"] == cur_year) &
+        (monthly["month"] == cur_month)
     )
 
     monthly["ym"] = pd.to_datetime(
@@ -146,6 +179,7 @@ def build_monthly_trend(df_all: pd.DataFrame, df_budget: pd.DataFrame):
         )
 
     return monthly.sort_values("ym").tail(13)
+
 
 monthly = build_monthly_trend(df_all, df_budget)
 
