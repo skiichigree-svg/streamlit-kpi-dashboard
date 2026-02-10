@@ -75,9 +75,13 @@ df_budget = load_budget()
 # Header
 # -------------------------------------
 st.title("📊 Performance Dashboard")
+meta = load_metadata()
 
-latest_date = df_all["jst_date"].max()
-st.caption(f"最新データ日付: {latest_date.date()}")
+if "latest_jst_date" in meta:
+    st.caption(f"最新データ日付: {meta['latest_jst_date']}")
+else:
+    st.caption("最新データ日付: N/A")
+
 
 # -------------------------------------
 # MTD / QTD / YTD (fact_recent 直)
