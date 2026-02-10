@@ -18,7 +18,7 @@ st.set_page_config(layout="wide")
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
-
+HIST_DIR = DATA_DIR / "historical"
 RECENT_PATH = DATA_DIR / "recent" / "fact_recent.parquet"
 BUDGET_PATH = DATA_DIR / "budget.csv"
 META_PATH = DATA_DIR / "metadata.json"
@@ -173,7 +173,7 @@ css_inject()
 # Guards: data existence
 # -----------------------------
 has_hist = HIST_DIR.exists() and any(HIST_DIR.glob("fact_*.parquet"))
-has_recent = RECENT_FILE.exists()
+has_recent = RECENT_PATH.exists()
 
 if not has_hist and not has_recent:
     st.error(
