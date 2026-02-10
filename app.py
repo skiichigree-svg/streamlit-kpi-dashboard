@@ -318,22 +318,56 @@ def monthly_actual_budget(df: pd.DataFrame, df_budget: pd.DataFrame):
     df["year"] = df["jst_date"].dt.year
     df["month"] = df["jst_date"].dt.month
 
+    # ---- actual（月次）
     act = df.groupby(["year", "month"], as_index=False).agg(
-        PartnerCostInUSD=("PartnerCostInUSD", "sum"),
-        PartnerCostInAdvertiserCurrency=("PartnerCostInAdvertiserCurrency", "sum"),
+        PartnerCostInUSD_actual=("PartnerCostInUSD", "sum"),
+        PartnerCostInAdvertiserCurrency_actual=("PartnerCostInAdvertiserCurrency", "sum"),
     )
 
-    bud = pd.DataFrame(columns=["year", "month", "PartnerCostInUSD", "PartnerCostInAdvertiserCurrency"])
+    if act.empty:
+        return act
+
+    # ---- actual が存在する最新年月
+    max_actual_ym = (act["year"] * 100 + act["month"]).max()
+
+    # ---- budget（月次）
+    bud = pd.DataFrame(
+        columns=["year", "month", "PartnerCostInUSD_budget", "PartnerCostInAdvertiserCurrency_budget"]
+    )
+
     if not df_budget.empty and {"year", "month"}.issubset(df_budget.columns):
-        # 予算CSVにJPY列が無い場合に備えて get で安全に
-        bud = df_budget.groupby(["year", "month"], as_index=False).agg(
-            PartnerCostInUSD=("PartnerCostInUSD", "sum") if "PartnerCostInUSD" in df_budget.columns else ("month", "size"),
-            PartnerCostInAdvertiserCurrency=("PartnerCostInAdvertiserCurrency", "sum") if "PartnerCostInAdvertiserCurrency" in df_budget.columns else ("month", "size"),
+        bud = df_budget.copy()
+        bud["ym"] = bud["year"] * 100 + bud["month"]
+
+        # ★★★ ここが最重要：将来月を切る ★★★
+        bud = bud[bud["ym"] <= max_actual_ym]
+
+        bud = bud.groupby(["year", "month"], as_index=False).agg(
+            PartnerCostInUSD_budget=("PartnerCostInUSD", "sum") if "PartnerCostInUSD" in bud.columns else ("month", "size"),
+            PartnerCostInAdvertiserCurrency_budget=("PartnerCostInAdvertiserCurrency", "sum") if "PartnerCostInAdvertiserCurrency" in bud.columns else ("month", "size"),
         )
 
-    m = act.merge(bud, on=["year", "month"], how="left", suffixes=("_actual", "_budget"))
-    m["ym"] = pd.to_datetime(m["year"].astype(str) + "-" + m["month"].astype(str) + "-01")
+    # ---- merge（actual 主体）
+    m = act.merge(bud, on=["year", "month"], how="left")
+
+    # ---- 安全な datetime 化
+    m = m.dropna(subset=["year", "month"])
+    m["year"] = m["year"].astype(int)
+    m["month"] = m["month"].astype(int)
+
+    m["ym"] = pd.to_datetime(
+        m["year"].astype(str)
+        + "-"
+        + m["month"].astype(str).str.zfill(2)
+        + "-01",
+        errors="coerce",
+    )
+
+    m = m.dropna(subset=["ym"])
+
+    # ---- Last 13 months（実績ベース）
     return m.sort_values("ym").tail(13)
+
 
 
 def monthly_chart(df: pd.DataFrame, show_usd: bool = True):

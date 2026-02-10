@@ -49,13 +49,6 @@ scripts/local/
 *.bat
 
 # =====================
-# Generated data (DO NOT COMMIT)
-# =====================
-data/metadata.json
-data/recent/
-data/historical/
-
-# =====================
 # Testing
 # =====================
 .pytest_cache/
