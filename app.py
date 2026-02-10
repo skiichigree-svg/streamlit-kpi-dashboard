@@ -4,10 +4,11 @@
 
 import os
 import json
+import calendar
 import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
-from datetime import datetime
+from datetime import datetime, date
 from pathlib import Path
 
 # -------------------------------------
@@ -41,6 +42,72 @@ def load_metadata():
         with open(META_PATH, encoding="utf-8") as f:
             return json.load(f)
     return {}
+
+# -----------------------------
+# Helpers
+# -----------------------------
+def load_json_dict(path: Path):
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception as e:
+        st.warning(f"metadata.json はあるが読み込みに失敗: {e}")
+        return None
+
+def css_inject():
+    st.markdown(
+        """
+        <style>
+        /* Pacing Card Typography */
+        .pacing-title {
+            font-size: 2.25rem;
+            font-weight: 700;
+            margin-bottom: 0.25rem;
+        }
+        .pacing-spend {
+            font-size: 1.75rem;
+            font-weight: 600;
+            line-height: 1.2;
+        }
+        .pacing-yoy {
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+
+        /* YoY color rules */
+        .yoy-up   { color: #1a9850; }   /* green */
+        .yoy-down { color: #d73027; }   /* red */
+        .yoy-flat { color: #7f8c8d; }   /* gray */
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+# -------------------------------------
+# Date helpers
+# -------------------------------------
+def days_in_month(d: date):
+    return calendar.monthrange(d.year, d.month)[1]
+
+def days_elapsed_in_quarter(d: date):
+    q = (d.month - 1) // 3
+    start_month = q * 3 + 1
+    elapsed = 0
+    for m in range(start_month, d.month):
+        elapsed += calendar.monthrange(d.year, m)[1]
+    return elapsed + d.day
+
+def days_in_quarter(d: date):
+    q = (d.month - 1) // 3
+    start_month = q * 3 + 1
+    total = 0
+    for m in range(start_month, start_month + 3):
+        total += calendar.monthrange(d.year, m)[1]
+    return total
+
+
 
 # -------------------------------------
 # Aggregation
@@ -76,46 +143,93 @@ df_all = load_recent()
 df_budget = load_budget()
 meta = load_metadata()
 
-st.title("📊 Performance Dashboard")
+st.markdown(
+    f"""
+    <div style="
+        display: flex;
+        align-items: baseline;
+        gap: 12px;
+        margin-bottom: 8px;
+    ">
+        <div style="font-size: 2.2rem; font-weight: 700;">
+            📊 Performance Dashboard
+        </div>
+        <div style="
+            font-size: 9px;
+            color: #7f8c8d;
+            line-height: 1.2;
+        ">
+            データリフレッシュ実行日時： {meta['last_updated']}<br>
+            最新データ日付： {meta['latest_jst_date']}
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
-# 最新データ日付（metadata 由来）
-if "latest_jst_date" in meta:
-    st.caption(f"最新データ日付: {meta['latest_jst_date']}")
+css_inject()
+
+# -----------------------------
+# Guards: data existence
+# -----------------------------
+has_hist = HIST_DIR.exists() and any(HIST_DIR.glob("fact_*.parquet"))
+has_recent = RECENT_FILE.exists()
+
+if not has_hist and not has_recent:
+    st.error(
+        "データがまだ生成されていません。\n\n"
+        "✅ まず refresh を実行してください（scheduler / 手動 refresh_data.py）。"
+    )
+    st.stop()
 
 # -------------------------------------
 # MTD / QTD / YTD
 # -------------------------------------
-today = pd.to_datetime(meta["latest_jst_date"])
-current_year = today.year
-current_month = today.month
+currency = st.radio("Currency", ["USD", "JPY"], horizontal=True)
 
-mtd = df_all.query("year == @current_year and month == @current_month")
-ytd = df_all.query("year == @current_year")
+cost_col = "PartnerCostInUSD" if currency == "USD" else "PartnerCostInAdvertiserCurrency"
+budget_col = "PartnerCostInUSD" if currency == "USD" else "PartnerCostInAdvertiserCurrency"
 
-qtd_months = [(current_month - 1) // 3 * 3 + i for i in range(1, 4)]
-qtd = df_all.query(
-    "year == @current_year and month in @qtd_months"
-)
+# MTD
+mtd_actual = df_all[
+    (df_all["year"] == latest_date.year) &
+    (df_all["month"] == latest_date.month)
+][cost_col].sum()
 
-def sum_block(df):
-    return (
-        df["PartnerCostInUSD"].sum(),
-        df["PartnerCostInAdvertiserCurrency"].sum(),
-    )
+mtd_budget = df_budget[
+    (df_budget["year"] == latest_date.year) &
+    (df_budget["month"] == latest_date.month)
+][budget_col].sum()
 
-mtd_usd, mtd_jpy = sum_block(mtd)
-qtd_usd, qtd_jpy = sum_block(qtd)
-ytd_usd, ytd_jpy = sum_block(ytd)
+mtd_pace = mtd_budget * latest_date.day / days_in_month(latest_date)
+
+# QTD
+q = (latest_date.month - 1) // 3
+q_months = [q * 3 + 1, q * 3 + 2, q * 3 + 3]
+
+qtd_actual = df_all[
+    (df_all["year"] == latest_date.year) &
+    (df_all["month"].isin(q_months))
+][cost_col].sum()
+
+qtd_budget = df_budget[
+    (df_budget["year"] == latest_date.year) &
+    (df_budget["month"].isin(q_months))
+][budget_col].sum()
+
+qtd_pace = qtd_budget * days_elapsed_in_quarter(latest_date) / days_in_quarter(latest_date)
+
+# YTD
+ytd_actual = df_all[df_all["year"] == latest_date.year][cost_col].sum()
+ytd_budget = df_budget[df_budget["year"] == latest_date.year][budget_col].sum()
+
+days_year = 366 if calendar.isleap(latest_date.year) else 365
+ytd_pace = ytd_budget * latest_date.timetuple().tm_yday / days_year
 
 c1, c2, c3 = st.columns(3)
-c1.metric("MTD (USD)", f"${mtd_usd:,.0f}")
-c1.metric("MTD (JPY)", f"¥{mtd_jpy:,.0f}")
-
-c2.metric("QTD (USD)", f"${qtd_usd:,.0f}")
-c2.metric("QTD (JPY)", f"¥{qtd_jpy:,.0f}")
-
-c3.metric("YTD (USD)", f"${ytd_usd:,.0f}")
-c3.metric("YTD (JPY)", f"¥{ytd_jpy:,.0f}")
+c1.metric("MTD", f"{currency} {mtd_actual:,.0f}", f"Pace {mtd_pace:,.0f}")
+c2.metric("QTD", f"{currency} {qtd_actual:,.0f}", f"Pace {qtd_pace:,.0f}")
+c3.metric("YTD", f"{currency} {ytd_actual:,.0f}", f"Pace {ytd_pace:,.0f}")
 
 st.divider()
 
@@ -124,59 +238,37 @@ st.divider()
 # -------------------------------------
 st.subheader("📈 Overall Monthly Trend (Last 13 Months)")
 
-currency = st.radio("Currency", ["USD", "JPY"], horizontal=True)
+trend = monthly_actual_budget(df_all, df_budget).tail(13)
 
-m = monthly_actual_budget(df_all, df_budget)
-
-value_col = (
-    "PartnerCostInUSD_actual"
-    if currency == "USD"
-    else "PartnerCostInAdvertiserCurrency_actual"
-)
-budget_col = (
-    "PartnerCostInUSD_budget"
-    if currency == "USD"
-    else "PartnerCostInAdvertiserCurrency_budget"
-)
-
-latest_ym = m["ym"].max()
-
-colors = []
-patterns = []
-
-for ym in m["ym"]:
-    if ym == latest_ym:
-        colors.append("#2ECC71")
-        patterns.append("/")
-    else:
-        colors.append("#2ECC71")
-        patterns.append("")
+latest_ym = f"{latest_date.year}-{latest_date.month}"
 
 fig = go.Figure()
 
 fig.add_bar(
-    x=m["ym"],
-    y=m[value_col],
+    x=trend["ym"],
+    y=trend[f"actual_{currency.lower()}"],
     name="Actual",
-    marker=dict(color=colors, pattern_shape=patterns),
+    marker=dict(
+        color="#2ecc71",
+        pattern_shape=["/" if ym == latest_ym else "" for ym in trend["ym"]],
+    ),
 )
 
-if budget_col in m.columns:
-    fig.add_scatter(
-        x=m["ym"],
-        y=m[budget_col],
-        name="Budget",
-        mode="lines+markers",
-        line=dict(dash="dash"),
-    )
+fig.add_scatter(
+    x=trend["ym"],
+    y=trend[f"budget_{currency.lower()}"],
+    name="Budget",
+    mode="lines+markers",
+    line=dict(color="#7f8c8d", dash="dash"),
+)
 
 fig.update_layout(
-    height=450,
-    xaxis_title="Month",
+    height=420,
     yaxis_title=currency,
-    legend_orientation="h",
+    xaxis_title="Month",
+    legend=dict(orientation="h"),
 )
 
 st.plotly_chart(fig, use_container_width=True)
 
-st.caption("※ ストライプ表示は進行中の月を示します")
+st.caption("※ Striped bar indicates partial (in-progress) month.")
