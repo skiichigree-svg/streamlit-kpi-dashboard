@@ -1,32 +1,55 @@
-\# Streamlit KPI Dashboard
+# Streamlit Dashboard v2
 
+## File structure
 
+```text
+.
+├─ app.py
+├─ modules/
+│  ├─ data_loader.py
+│  ├─ data_processing.py
+│  ├─ charts.py
+│  └─ ui_components.py
+├─ sql/
+│  └─ monthly_dashboard_extract.sql
+└─ data/
+   ├─ metadata.json
+   ├─ fact_dashboard.parquet
+   ├─ historical/*.parquet
+   └─ recent/fact_recent.parquet
+```
 
-This project visualizes overall performance KPIs using a cached Parquet layer.
+## Expected data grain
 
+Minimum recommended grain:
 
+- Year
+- Month
+- Pod
+- Office, optional
+- AdvertiserId
+- AdvertiserName
+- Channel
+- Media
+- PartnerCost
 
-\## Architecture
+## Metadata
 
-Vertica → Parquet (Local ETL) → Streamlit Dashboard (Cloud)
+Use `data/metadata.json` for latest data date and refresh timestamp.
 
+Example:
 
+```json
+{
+  "latest_jst_date": "2026-03-31",
+  "last_updated": "2026-05-12 15:30:00"
+}
+```
 
-\## Data Update
+## Why split files?
 
-Data is refreshed daily on a local machine via Task Scheduler.
-
-The dashboard reads Parquet files committed to this repository.
-
-
-
-\## Run Locally
-
-```bash
-
-pip install -r requirements.txt
-
-streamlit run app.py
-
-
-
+- `app.py`: screen layout and flow only
+- `data_loader.py`: read parquet/csv and normalize columns
+- `data_processing.py`: period filtering, churn, aggregation
+- `charts.py`: Plotly chart definitions
+- `ui_components.py`: CSS and reusable UI components
