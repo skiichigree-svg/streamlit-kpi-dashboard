@@ -53,3 +53,18 @@ scripts/local/
 # =====================
 .pytest_cache/
 .coverage
+
+# =====================
+# Dashboard data
+# =====================
+data/
+*.parquet
+*.csv
+metadata.json
+
+# =====================
+# Local data / ETL
+# =====================
+data/
+scripts/
+sql/
